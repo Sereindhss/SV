@@ -29,7 +29,12 @@ def load_features(feature_list):
     with open(feature_list, 'r') as f:
         lines = f.readlines()
     for line in lines:
-        parts = line.strip().split(' ')
+        line = line.strip()
+        if not line:  # Skip empty lines
+            continue
+        parts = line.split(' ')
+        if len(parts) < 2:  # Skip malformed lines
+            continue
         feature = [float(e) for e in parts[1:]]
         feature = feature/np.linalg.norm(np.array(feature))
         features.append(feature)
@@ -82,8 +87,15 @@ def main(folder, feat_list, pair_list, score_list, alpha):
     start = time.time()
     duration_plain = []
     n = len(lines)
+    processed = 0
     for i, line in enumerate(lines):
-        file1, file2, _ = line.strip().split(' ')
+        line = line.strip()
+        if not line:  # Skip empty lines
+            continue
+        parts = line.split(' ')
+        if len(parts) != 3:  # Skip malformed lines
+            continue
+        file1, file2, _ = parts
         # load files
         feature1 = features[int(file1)]
         P, r = load_enrolled_file('{}/{}.npy'.format(folder, file2))
@@ -91,9 +103,11 @@ def main(folder, feat_list, pair_list, score_list, alpha):
         score, duration = check_ironmask(feature1, P, r, alpha)
         duration_plain.append(duration)
         fw.write('{} {} {}\n'.format(file1, file2, score))
-        if i % 1000 == 0:
-            print('{}/{}'.format(i, n))
+        processed += 1
+        if processed % 100000 == 0:
+            print('{}/{}'.format(processed, n))
     fw.close()
+    n = processed  # Update n to actual processed count
 
     duration = time.time() - start
     print('total duration {}, ironmask duration {}, calculate {} pairs.\n'.format(

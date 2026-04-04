@@ -133,37 +133,26 @@ def main(feature_list, folder, ase_dim):
     """
     enrollment
     """
+    # print('loading features...')
     features = load_features(feature_list)
     n, dim = len(features), len(features[0])
+    # L_list = [i for i in range(0, 2*L)]
 
     print('[ASE] Encrypting features...')
     start = time.time()
     duration_plain = []
-    file_sizes = []  # 存储每个特征文件的大小（字节）
-
     for i, feature in enumerate(features):
-        ase_result, duration = generate_subspace(feature, dim, ase_dim, features)
-        file_path = '{}/{}.npy'.format(folder, i)
-        np.save(file_path, np.array(ase_result, np.dtype(object)))
-        # 获取文件大小
-        file_sizes.append(os.path.getsize(file_path))
+        ase_result, duration = generate_subspace(
+            feature, dim, ase_dim, features)
+        np.save('{}/{}.npy'.format(folder, i),
+                np.array(ase_result, np.dtype(object)))
+        # measure time
         duration_plain.append(duration)
         if i % 1000 == 0:
             print('{}/{}'.format(i, n))
-
     duration = time.time() - start
-    # 计算平均文件大小（字节），并转换为千比特
-    avg_file_size_bytes = sum(file_sizes) / n
-    avg_file_size_kb = avg_file_size_bytes * 8 / 1024
-
-    # 获取注册过程的峰值内存（进程级别）
-    peak_mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
-
-    print('total duration {:.4f}, ase duration {:.4f}, encrypted {} features.\n'.format(
+    print('total duration {}, ase duration {},  encrypted {} features.\n'.format(
         duration, sum(duration_plain), n))
-    print('[Metrics] Enrollment Peak RAM (注册峰值内存): {:.2f} MB'.format(peak_mem))
-    print('[Metrics] Average Template File Size (单个特征模板平均大小): {:.2f} KB ({:.2f} Kb)'.format(
-        avg_file_size_bytes/1024, avg_file_size_kb))
 
 
 if __name__ == '__main__':

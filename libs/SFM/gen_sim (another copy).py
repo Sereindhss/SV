@@ -123,7 +123,7 @@ def main(folder, pair_list, score_list, precision):
         # measure time
         duration_sfm.append(duration)
         fw.write('{} {} {}\n'.format(file1, file2, score))
-        if i % 50000 == 0:
+        if i % 100000 == 0:
             print('{}/{}'.format(i, n))
     fw.close()
 

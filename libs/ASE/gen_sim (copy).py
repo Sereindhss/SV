@@ -8,7 +8,6 @@ import time
 import random
 import resource
 from joblib import Parallel, delayed
-import tracemalloc  # 新增
 
 # parse the args
 parser = argparse.ArgumentParser(description='Match in ASE')
@@ -63,10 +62,8 @@ def dist_p_to_s(e, d, basis_d):
 def dist_s_to_s(d, basis_d, e, basis_e):
     """
     subspace-to-subspace distance
-    返回 (距离, (耗时, 内存峰值字节))
     """
     assert len(basis_d) == len(basis_e)
-    tracemalloc.start()  # 开始追踪内存
     start = time.time()
     num_basis = len(basis_d)
     # generate orthogonal basis
@@ -90,11 +87,7 @@ def dist_s_to_s(d, basis_d, e, basis_e):
     y_star = e + np.dot(alpha_beta[num_basis:], basis_e)
 
     dist = np.linalg.norm(x_star - y_star)
-    duration = time.time() - start
-    # 获取内存峰值（字节）
-    current, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-    return dist, (duration, peak)
+    return dist, time.time() - start
 
 
 def chunkify(fname, size=1024*1024):
@@ -113,7 +106,7 @@ def chunkify(fname, size=1024*1024):
 
 def process_lines(chunk_info_list, pair_list, folder, i):
     score_list = []
-    durations_list = []  # 每个元素为 (file1, file2, (duration, peak))
+    durations_list = []
     partid_lineinfo_map = {}
     with open(pair_list, 'r') as f:
         for j in range(len(chunk_info_list)):
@@ -121,26 +114,21 @@ def process_lines(chunk_info_list, pair_list, folder, i):
             f.seek(chunkStart)
             lines = f.read(chunkSize).splitlines()
             for line in lines:
-                line = line.strip()
-                if not line:  # Skip empty lines
-                    continue
-                parts = line.split(' ')
-                if len(parts) != 3:  # Skip malformed lines
-                    continue
-                file1, file2, _ = parts
+                file1, file2, _ = line.strip().split(' ')
                 # load files
                 d, basis_d = load_enrolled_file(
                     '{}/{}.npy'.format(folder, file1))
                 e, basis_e = load_enrolled_file(
                     '{}/{}.npy'.format(folder, file2))
-                dist, (duration, peak) = dist_s_to_s(d, basis_d, e, basis_e)
+                dist, duration = dist_s_to_s(d, basis_d, e, basis_e)
                 score = (2 - dist**2)/2
                 score = min(max(score, -1), 1)
 
                 score_list.append((file1, file2, score))
-                durations_list.append((file1, file2, (duration, peak)))
+                durations_list.append((file1, file2, duration))
 
     partid_lineinfo_map[i] = [score_list, durations_list]
+
     return partid_lineinfo_map
 
 
@@ -150,39 +138,29 @@ def main(folder, pair_list, score_list):
         lines = f.readlines()
 
     fw = open(score_list, 'w')
+
     print('[ASE] Decrypting features...')
     start = time.time()
     duration_plain = []
-    match_mems = []  # 存储每次匹配的内存峰值
 
     n = len(lines)
-    if True:   # n < 100000
-        processed = 0
+    if n < 100000:
         for i, line in enumerate(lines):
-            line = line.strip()
-            if not line:  # Skip empty lines
-                continue
-            parts = line.split(' ')
-            if len(parts) != 3:  # Skip malformed lines
-                continue
-            file1, file2, _ = parts
+            file1, file2, _ = line.strip().split(' ')
             # load files
             d, basis_d = load_enrolled_file('{}/{}.npy'.format(folder, file1))
             e, basis_e = load_enrolled_file('{}/{}.npy'.format(folder, file2))
 
-            dist, (duration, peak) = dist_s_to_s(d, basis_d, e, basis_e)
+            dist, duration = dist_s_to_s(d, basis_d, e, basis_e)
             # measure time
             score = (2 - dist**2)/2
             score = min(max(score, -1), 1)
             duration_plain.append(duration)
-            match_mems.append(peak)
             fw.write('{} {} {}\n'.format(file1, file2, score))
-            processed += 1
-            if processed % 100000 == 0:
-                print('{}/{}'.format(processed, n))
-        n = processed  # Update n to actual processed count
+            if i % 1000 == 0:
+                print('{}/{}'.format(i, n))
     else:
-        # Parallel Generate the scores.
+        # Paralel Generate the scores.
         chunk_info_list = list(chunkify(pair_list, 1024*1024))
         lnum = len(chunk_info_list)
         num_jobs = min(lnum, 10)
@@ -195,7 +173,7 @@ def main(folder, pair_list, score_list):
 
         # concat in order
         all_partid_lineinfo_map = {}
-        for partid_lineinfo_map in result_list:
+        for (partid_lineinfo_map) in result_list:
             for partid, info in partid_lineinfo_map.items():
                 all_partid_lineinfo_map[partid] = info
 
@@ -206,27 +184,16 @@ def main(folder, pair_list, score_list):
             for lineid, scoreinfo in enumerate(score_list):
                 file1, file2, score = scoreinfo
                 fw.write('{} {} {}\n'.format(file1, file2, score))
-                _, _, (duration, peak) = durations_list[lineid]
+                _, _, duration = durations_list[lineid]
                 duration_plain.append(duration)
-                match_mems.append(peak)
-                i += 1
-                if i % 100000 == 0:
+                if i % 1000 == 0:
                     print('{}/{}'.format(i, n))
-        n = i  # Update n to actual processed count
-
+                i += 1
     fw.close()
+
     duration = time.time() - start
-
-    if n == 0:
-        print('No valid pairs found in pair list.')
-        return
-
-    avg_match_bytes = sum(match_mems) / n
-    avg_match_kb = avg_match_bytes * 8 / 1024
-
-    print('total duration {:.4f}, ase duration {:.4f}, calculate {} pairs.\n'.format(
+    print('total duration {}, ase duration {}, calculate {} pairs.\n'.format(
         duration, sum(duration_plain), n))
-    print('[Metrics] Average Match Memory (平均匹配内存): {:.2f} Kb'.format(avg_match_kb))
 
 
 if __name__ == '__main__':

@@ -22,7 +22,7 @@ echo "--------------------------------------"
 # --- 日志配置结束 ---
 
 # 第一部分：生成分数
-for BM in 'b' # 'b'
+for BM in 'c' # 'b'
 do
     # Convert ijbx feature to id-template feature
     IJBX_BASE_FOLD=data/ijb/
@@ -110,9 +110,9 @@ do
         # Step 1: Standard enrollment (all features)
         python3 libs/SecureVector/enrollment.py --feat_list ${TEMP_FEAT_LIST} --key_size ${KS} --K ${K} --folder ${FOLD}
         # Step 2: Build cluster index
-        python3 libs/SV_cluster/build_index.py --feat_list ${TEMP_FEAT_LIST} --pair_list ${PAIR_LIST} --folder ${FOLD} --n_clusters ${N_CLUSTERS} --key_size ${KS} --K ${K} --metrics_output ${FOLD}/metrics_build.json
+        python3 libs/SecureVector/build_index.py --feat_list ${TEMP_FEAT_LIST} --pair_list ${PAIR_LIST} --folder ${FOLD} --n_clusters ${N_CLUSTERS} --key_size ${KS} --K ${K}
         # Step 3: Two-stage matching
-        python3 libs/SV_cluster/cluster_match.py --folder ${FOLD} --pair_list ${PAIR_LIST} --score_list ${SCORE_LIST} --top_k ${TOP_K} --key_size ${KS} --K ${K} --metrics_output ${FOLD}/metrics_match.json
+        python3 libs/SecureVector/cluster_match.py --folder ${FOLD} --pair_list ${PAIR_LIST} --score_list ${SCORE_LIST} --top_k ${TOP_K} --key_size ${KS} --K ${K}
 
     else
         echo 'key error'
@@ -122,7 +122,7 @@ done
 
 echo "===== 即将进入评估阶段 ====="
 # 第二部分：评估
-for BM in 'b' # 'b'
+for BM in 'c' # 'b'
 do 
     echo "--------------------------------------"
     echo "[${METHOD}] 正在评估数据集: IJB-${BM}"
@@ -132,16 +132,7 @@ do
     SCORE_LIST=${FOLD}/score.list 
     
     if [ -f "${SCORE_LIST}" ]; then
-        if [[ $M == 5 ]]; then
-            python3 eval/eval_1vn.py --pair_list ${PAIR_LIST} --score_list ${SCORE_LIST} --metrics_output ${FOLD}/metrics_eval.json
-            echo ""
-            echo "[${METHOD}] 指标报告已保存至:"
-            echo "  ${FOLD}/metrics_build.json"
-            echo "  ${FOLD}/metrics_match.json"
-            echo "  ${FOLD}/metrics_eval.json"
-        else
-            python3 eval/eval_1vn.py --pair_list ${PAIR_LIST} --score_list ${SCORE_LIST}
-        fi
+        python3 eval/eval_1vn.py --pair_list ${PAIR_LIST} --score_list ${SCORE_LIST}
     else
         echo "跳过 IJB-${BM}: 分数文件未生成"
     fi

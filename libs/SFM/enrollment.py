@@ -94,7 +94,7 @@ def main(feature_list, folder, precision, public_key):
         result.save('{}/{}'.format(folder, i))
         # measure time
         duration_sfm.append(duration)
-        if i % 1000 == 0:
+        if i % 100000 == 0:
             print('{}/{}'.format(i, n))
     duration = time.time() - start
     print('total duration {}, sfm duration {}, encrypted {} features.\n'.format(
