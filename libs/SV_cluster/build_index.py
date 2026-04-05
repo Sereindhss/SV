@@ -21,8 +21,10 @@ import argparse
 import os
 import time
 import resource
+import faiss
 from itertools import repeat
 from sklearn.cluster import KMeans
+
 
 parser = argparse.ArgumentParser(description='Build clustering index for SecureVector')
 parser.add_argument('--feat_list', type=str, required=True,
@@ -115,26 +117,97 @@ def main():
 
     gallery_feats = features[gallery_indices]
 
-    print('[ClusterIndex] Running K-Means clustering (C={})...'.format(n_clusters))
-    start = time.time()
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10, verbose=0)
-    kmeans.fit(gallery_feats)
-    cluster_duration = time.time() - start
-    print('  K-Means completed in {:.2f}s'.format(cluster_duration))
+#    print('[ClusterIndex] Running K-Means clustering (C={})...'.format(n_clusters))
+#    start = time.time()
+#    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10, verbose=0)
+#    kmeans.fit(gallery_feats)
+#    cluster_duration = time.time() - start
+#    print('  K-Means completed in {:.2f}s'.format(cluster_duration))
 
-    centers = kmeans.cluster_centers_
-    center_norms = np.linalg.norm(centers, axis=1)
-    centers = centers / center_norms[:, np.newaxis]
-    assignments = kmeans.labels_
+#    centers = kmeans.cluster_centers_
+#    center_norms = np.linalg.norm(centers, axis=1)
+#    centers = centers / center_norms[:, np.newaxis]
+#    assignments = kmeans.labels_
+
+#    for c in range(n_clusters):
+#        members = np.sum(assignments == c)
+#        if members == 0:
+#            print('  Warning: cluster {} has 0 members'.format(c))
+
+#    print('[ClusterIndex] Cluster size stats: min={}, max={}, mean={:.1f}'.format(
+#        min(np.bincount(assignments)), max(np.bincount(assignments)),
+#        np.mean(np.bincount(assignments))))
+
+#--tihuan--
+#    centers = kmeans.cluster_centers_
+#    center_norms = np.linalg.norm(centers, axis=1)
+
+    print('[ClusterIndex] Running Spherical K-Means via Faiss (C={})...'.format(n_clusters))
+    start = time.time()
+    
+    d = gallery_feats.shape[1]
+    # Faiss 严格要求数据类型为 float32
+    gallery_feats_f32 = gallery_feats.astype(np.float32)
+    
+    # spherical=True 是关键：强制在每次迭代中对中心进行 L2 归一化，完美对齐余弦空间
+    kmeans = faiss.Kmeans(d=d, k=n_clusters, niter=20, verbose=False, spherical=True, seed=42)
+    kmeans.train(gallery_feats_f32)
+    
+    centers = kmeans.centroids
+    
+    print('  [ClusterIndex] Running Soft Assignment (软聚类分配 - 余弦相似度版本)...')
+    # 利用 faiss 构建内积（余弦相似度）索引，用于快速计算特征到中心的得分
+    index = faiss.IndexFlatIP(d)
+    index.add(centers)
+    
+    # 搜索每个图库特征距离最近的 2 个簇中心
+    # scores 返回的是内积相似度（越大越近）
+    scores, sorted_center_indices = index.search(gallery_feats_f32, 2)
+    cluster_duration = time.time() - start
+    print('  Spherical K-Means completed in {:.2f}s'.format(cluster_duration))
+    
+    # 软聚类阈值：第二名的相似度必须达到第一名的 85% 以上才算边界样本
+    threshold_ratio = 0.70  
+    
+    assign_gidx = []
+    assign_cid = []
+    
+    for i in range(n_gallery):
+        c1 = sorted_center_indices[i, 0] # 最相似的簇
+        c2 = sorted_center_indices[i, 1] # 第二相似的簇
+        
+        s1 = scores[i, 0]
+        s2 = scores[i, 1]
+        
+        # 无条件加入最相似的簇
+        assign_gidx.append(gallery_indices[i])
+        assign_cid.append(c1)
+        
+        # 边界样本判断：内积相似度越大越好，比值 > threshold_ratio
+        if s2 / (s1 + 1e-9) > threshold_ratio:
+            assign_gidx.append(gallery_indices[i])
+            assign_cid.append(c2)
+            
+    assign_gidx = np.array(assign_gidx)
+    assign_cid = np.array(assign_cid)
+    
+    # 兼容后面的指标统计
+    cluster_sizes = np.bincount(assign_cid, minlength=n_clusters)
 
     for c in range(n_clusters):
-        members = np.sum(assignments == c)
-        if members == 0:
+        if cluster_sizes[c] == 0:
             print('  Warning: cluster {} has 0 members'.format(c))
 
     print('[ClusterIndex] Cluster size stats: min={}, max={}, mean={:.1f}'.format(
-        min(np.bincount(assignments)), max(np.bincount(assignments)),
-        np.mean(np.bincount(assignments))))
+        min(cluster_sizes), max(cluster_sizes), np.mean(cluster_sizes)))
+    print('  [ClusterIndex] Soft Assignment expanded total index items from {} to {}'.format(
+        n_gallery, len(assign_gidx)))
+        
+    # 由于 faiss 的 centroids 已经归一化了，这里直接提取范数全为1，兼容原代码写入 meta 的结构
+    center_norms = np.linalg.norm(centers, axis=1)
+
+
+#--tihuan--
 
     centers_dir = os.path.join(args.folder, 'centers')
     os.makedirs(centers_dir, exist_ok=True)
@@ -153,10 +226,17 @@ def main():
     enroll_duration = time.time() - start
     print('  Center encryption completed in {:.2f}s'.format(enroll_duration))
 
+#    meta_path = os.path.join(args.folder, 'cluster_meta.npz')
+#    np.savez(meta_path,
+#             gallery_indices=gallery_indices,
+#             assignments=assignments,
+#             n_clusters=np.array(n_clusters),
+#             center_norms=center_norms)
     meta_path = os.path.join(args.folder, 'cluster_meta.npz')
     np.savez(meta_path,
              gallery_indices=gallery_indices,
-             assignments=assignments,
+             assign_gidx=assign_gidx,      # 替换为软聚类的映射
+             assign_cid=assign_cid,        # 替换为软聚类的映射
              n_clusters=np.array(n_clusters),
              center_norms=center_norms)
     print('[ClusterIndex] Saved cluster metadata to {}'.format(meta_path))
@@ -180,7 +260,7 @@ def main():
     storage_gallery_estimate = int(avg_enrolled_size * n_gallery)
     storage_inflation = (storage_index_total / storage_gallery_estimate
                          if storage_gallery_estimate > 0 else 0)
-
+    assignments = assign_cid
     cluster_sizes = np.bincount(assignments)
     peak_mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
 

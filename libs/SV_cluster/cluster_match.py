@@ -105,20 +105,36 @@ def main():
     folder = args.folder
 
     # --- Load cluster metadata ---
+#    meta_path = os.path.join(folder, 'cluster_meta.npz')
+#    meta = np.load(meta_path, allow_pickle=True)
+#    gallery_indices = meta['gallery_indices']
+#    assignments = meta['assignments']
+#    n_clusters = int(meta['n_clusters'])
+
+#    if top_k > n_clusters:
+#        top_k = n_clusters
+#        print('Warning: top_k reduced to {} (total clusters)'.format(top_k))
+
+#    cluster_members = defaultdict(set)
+#    for i, gidx in enumerate(gallery_indices):
+#        cluster_members[int(assignments[i])].add(int(gidx))
+#--tihuan--
     meta_path = os.path.join(folder, 'cluster_meta.npz')
     meta = np.load(meta_path, allow_pickle=True)
     gallery_indices = meta['gallery_indices']
-    assignments = meta['assignments']
+    assign_gidx = meta['assign_gidx']
+    assign_cid = meta['assign_cid']
     n_clusters = int(meta['n_clusters'])
 
     if top_k > n_clusters:
         top_k = n_clusters
         print('Warning: top_k reduced to {} (total clusters)'.format(top_k))
 
+    # 构建每个簇的图库成员集合（软聚类下，一个图库ID可能出现在多个簇中）
     cluster_members = defaultdict(set)
-    for i, gidx in enumerate(gallery_indices):
-        cluster_members[int(assignments[i])].add(int(gidx))
-
+    for gidx, cid in zip(assign_gidx, assign_cid):
+        cluster_members[int(cid)].add(int(gidx))
+#--tihuan--
     print('[ClusterMatch] Index loaded: {} clusters, {} gallery, top_k={}'.format(
         n_clusters, len(gallery_indices), top_k))
 
@@ -182,9 +198,25 @@ def main():
             coarse_ops += 1
             probe_coarse_decrypt_ops += 1
 
+#        center_scores.sort(key=lambda x: x[1], reverse=True)
+#        top_clusters = center_scores[:top_k]
+#--tihuan2--
         center_scores.sort(key=lambda x: x[1], reverse=True)
-        top_clusters = center_scores[:top_k]
-
+        
+        # 动态自适应截断 (Adaptive Top-K)
+        top_score = center_scores[0][1]
+        margin = 0.08  # 允许与最高分相差 0.08 的相似度
+        min_clusters = 5   # 最少强制搜 5 个簇兜底
+        max_clusters = 25  # 最多搜 25 个簇封顶
+        
+        top_clusters = []
+        for i, (cid, score) in enumerate(center_scores):
+            # 只要没超过最大限制，且满足最小数量或在分数边界内，就加入候选
+            if i < min_clusters or (top_score - score <= margin and i < max_clusters):
+                top_clusters.append((cid, score))
+            else:
+                break
+#--tihuan2--
         candidate_gallery = set()
         for cluster_id, _ in top_clusters:
             candidate_gallery.update(cluster_members[cluster_id])
