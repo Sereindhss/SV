@@ -155,42 +155,45 @@ def main():
     
     centers = kmeans.centroids
     
-    print('  [ClusterIndex] Running Soft Assignment (软聚类分配 - 余弦相似度版本)...')
-    # 利用 faiss 构建内积（余弦相似度）索引，用于快速计算特征到中心的得分
+    print('  [ClusterIndex] Running Soft Assignment (软聚类分配 - 宽松 Top-3 版本)...')
+    # 利用 faiss 构建内积（余弦相似度）索引
     index = faiss.IndexFlatIP(d)
     index.add(centers)
     
-    # 搜索每个图库特征距离最近的 2 个簇中心
-    # scores 返回的是内积相似度（越大越近）
-    scores, sorted_center_indices = index.search(gallery_feats_f32, 2)
+    # 搜索前 3 个簇中心
+    scores, sorted_center_indices = index.search(gallery_feats_f32, 3)
     cluster_duration = time.time() - start
     print('  Spherical K-Means completed in {:.2f}s'.format(cluster_duration))
     
-    # 软聚类阈值：第二名的相似度必须达到第一名的 85% 以上才算边界样本
-    threshold_ratio = 0.70  
+    # 软聚类阈值：恢复比例判定，并且大幅放宽到 0.75
+    # 只要第二、第三名的相似度达到第一名的 75%，全部收编！
+    threshold_ratio = 0.75  
     
     assign_gidx = []
     assign_cid = []
     
     for i in range(n_gallery):
-        c1 = sorted_center_indices[i, 0] # 最相似的簇
-        c2 = sorted_center_indices[i, 1] # 第二相似的簇
+        c1 = sorted_center_indices[i, 0] 
+        s1 = scores[i, 0]                
         
-        s1 = scores[i, 0]
-        s2 = scores[i, 1]
-        
-        # 无条件加入最相似的簇
+        # 无条件加入最高分的簇
         assign_gidx.append(gallery_indices[i])
         assign_cid.append(c1)
         
-        # 边界样本判断：内积相似度越大越好，比值 > threshold_ratio
-        if s2 / (s1 + 1e-9) > threshold_ratio:
-            assign_gidx.append(gallery_indices[i])
-            assign_cid.append(c2)
+        # 检查第 2 名和第 3 名
+        for j in range(1, 3):
+            cj = sorted_center_indices[i, j]
+            sj = scores[i, j]
+            
+            # 关键判定：用比例，且大幅放宽
+            if sj / (s1 + 1e-9) > threshold_ratio:
+                assign_gidx.append(gallery_indices[i])
+                assign_cid.append(cj)
+        
             
     assign_gidx = np.array(assign_gidx)
     assign_cid = np.array(assign_cid)
-    
+    assignments = assign_cid
     # 兼容后面的指标统计
     cluster_sizes = np.bincount(assign_cid, minlength=n_clusters)
 
@@ -260,7 +263,7 @@ def main():
     storage_gallery_estimate = int(avg_enrolled_size * n_gallery)
     storage_inflation = (storage_index_total / storage_gallery_estimate
                          if storage_gallery_estimate > 0 else 0)
-    assignments = assign_cid
+
     cluster_sizes = np.bincount(assignments)
     peak_mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
 

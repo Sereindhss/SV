@@ -205,8 +205,8 @@ def main():
         
         # 动态自适应截断 (Adaptive Top-K)
         top_score = center_scores[0][1]
-        margin = 0.08  # 允许与最高分相差 0.08 的相似度
-        min_clusters = 5   # 最少强制搜 5 个簇兜底
+        margin = 0.12  # 允许与最高分相差 0.08 的相似度 0.12
+        min_clusters = 10   # 最少强制搜 5 个簇兜底 10
         max_clusters = 25  # 最多搜 25 个簇封顶
         
         top_clusters = []
