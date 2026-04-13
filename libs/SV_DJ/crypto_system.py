@@ -18,6 +18,7 @@ import cProfile
 import pstats
 import io
 from itertools import repeat
+from functools import lru_cache
 import gmpy2
 from gmpy2 import mpz
 from damgard_jurik import EncryptedNumber
@@ -79,7 +80,9 @@ def _pool_init_worker(keys_dir, key_size, repo_root, crt_tuple):
         os.path.join(keys_dir, 'privatekey_{}.npy'.format(key_size)), allow_pickle=True)[0]
     _crt_factors = crt_tuple
 
+@lru_cache(maxsize=8192)
 def load_enrolled_file(file):
+    """Cache repeated gallery/probe .npy loads (same path across many pair lines)."""
     c_f, C_tilde_f = np.load(file, allow_pickle=True)
     return c_f, C_tilde_f
 
@@ -285,7 +288,8 @@ def main_parallel(folder, pair_list, score_list, K, L, M, s, key_size, feat_list
     initargs = (KEYS_DIR, key_size, _REPO_ROOT, _crt_factors)
 
     start = time.time()
-    chunksize = max(1, len(work) // (jobs * 8))
+    # Coarser chunks reduce IPC overhead; tune with --jobs (plan: favor fewer round-trips).
+    chunksize = max(1, len(work) // max(1, jobs * 4))
     with multiprocessing.Pool(jobs, initializer=_pool_init_worker, initargs=initargs) as pool:
         raw = pool.map(_worker_match_one, work, chunksize=chunksize)
 
@@ -362,8 +366,12 @@ def run_profile_subset(folder, pair_list, K, L, M, n_pairs):
     buf = io.StringIO()
     ps = pstats.Stats(pr, stream=buf).sort_stats('cumulative')
     ps.print_stats(45)
-    print(buf.getvalue())
-    print('[SV_DJ] Profile done. Look for damgard_jurik_reduce, pow, decrypt_encrypted_number_crt, etc.')
+    out = buf.getvalue()
+    print(out)
+    print(
+        '[SV_DJ] Profile done. Typical hotspots: gmpy2.powmod / pow_mod_crt (CRT decrypt), '
+        'then damgard_jurik_reduce; if CRT off, PrivateKeyRing.decrypt + pow_mod dominate.'
+    )
 
 
 if __name__ == '__main__':
