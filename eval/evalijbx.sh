@@ -2,7 +2,7 @@
 
 M=$1  
 
-METHOD_LIST=('baseline' 'securevector' 'ase' 'ironmask' 'sfm' 'securevector_cluster')
+METHOD_LIST=('baseline' 'securevector' 'ase' 'ironmask' 'sfm' 'securevector_cluster' 'sv_dj')
 METHOD=${METHOD_LIST[$M]}
 
 # --- 日志配置开始 ---
@@ -22,7 +22,7 @@ echo "--------------------------------------"
 # --- 日志配置结束 ---
 
 # 第一部分：生成分数
-for BM in 'b' # 'b'
+for BM in 'c' # 'b'
 do
     # Convert ijbx feature to id-template feature
     IJBX_BASE_FOLD=data/ijb/
@@ -114,6 +114,21 @@ do
         # Step 3: Two-stage matching
         python3 libs/SV_cluster/cluster_match.py --folder ${FOLD} --pair_list ${PAIR_LIST} --score_list ${SCORE_LIST} --top_k ${TOP_K} --key_size ${KS} --K ${K} --metrics_output ${FOLD}/metrics_match.json
 
+    elif [[ $M == 6 ]]
+    then
+        KS=512
+        K=128
+        S=2
+        # key generation
+        if [ ! -f libs/SV_DJ/keys/privatekey_${KS}.npy ]; then
+            echo 'generate Damgard-Jurik keys...'
+            python3 libs/SV_DJ/crypto_system.py --genkey 1 --key_size ${KS} --s ${S}
+        fi
+        # enrollment
+        python3 libs/SV_DJ/enrollment.py --public_key libs/SV_DJ/keys/publickey --feat_list ${TEMP_FEAT_LIST} --key_size ${KS} --K ${K} --s ${S} --folder ${FOLD}
+        # generate similarities
+        python3 libs/SV_DJ/crypto_system.py --key_size ${KS} --K ${K} --s ${S} --folder ${FOLD} --pair_list ${PAIR_LIST} --score_list ${SCORE_LIST} --feat_list ${TEMP_FEAT_LIST}
+
     else
         echo 'key error'
     fi
@@ -122,7 +137,7 @@ done
 
 echo "===== 即将进入评估阶段 ====="
 # 第二部分：评估
-for BM in 'b' # 'b'
+for BM in 'c' # 'b'
 do 
     echo "--------------------------------------"
     echo "[${METHOD}] 正在评估数据集: IJB-${BM}"
@@ -138,6 +153,13 @@ do
             echo "[${METHOD}] 指标报告已保存至:"
             echo "  ${FOLD}/metrics_build.json"
             echo "  ${FOLD}/metrics_match.json"
+            echo "  ${FOLD}/metrics_eval.json"
+        elif [[ $M == 6 ]]; then
+            python3 eval/eval_1vn.py --pair_list ${PAIR_LIST} --score_list ${SCORE_LIST} --metrics_output ${FOLD}/metrics_eval.json
+            echo ""
+            echo "[${METHOD}] 指标报告已保存至:"
+            echo "  ${FOLD}/metrics_dj_enroll.json"
+            echo "  ${FOLD}/metrics_dj.json"
             echo "  ${FOLD}/metrics_eval.json"
         else
             python3 eval/eval_1vn.py --pair_list ${PAIR_LIST} --score_list ${SCORE_LIST}

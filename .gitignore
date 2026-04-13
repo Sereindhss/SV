@@ -135,6 +135,9 @@ dmypy.json
 libs/SFM/keys/
 libs/SecureVector/keys/
 
+# SV_DJ offline R_i pool disk cache (pickle; can be large)
+libs/SV_DJ/cache/*.pkl
+
 # data
 data/
 *.tar
