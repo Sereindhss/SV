@@ -98,20 +98,51 @@ def load_original_features(feat_list_path):
             features[str(i)] = feature
     return features
 
-def decode_uvw(C_f, K, L):
-    u_list, v_list = [], []
-    for i in range(K):
-        next_C_f = C_f//(4*L)
-        u_list.append(C_f - (4*L)*next_C_f)
-        C_f = next_C_f
-    for i in range(K):
-        next_C_f = C_f//(4*L)
-        v_list.append(C_f - (4*L)*next_C_f)
-        C_f = next_C_f
-    w_f = C_f
-    u_list.reverse()
-    v_list.reverse()
-    return u_list, v_list, int(w_f)
+
+_LUT_E_U = []
+_CONST_C1 = 0
+_CONST_C2 = 0
+_CONST_DIVISOR_MPZ = None
+_LUT_INITIALIZED = False
+
+
+def _init_lut_and_constants(L, M):
+    """
+    Global LUT and constant initialization. Called once per worker process.
+    Precomputes the LUT_E_U table for fast score calculation.
+    """
+    global _LUT_E_U, _CONST_C1, _CONST_C2, _CONST_DIVISOR_MPZ, _LUT_INITIALIZED
+    if _LUT_INITIALIZED:
+        return
+    
+    _CONST_C1 = 2**15 * L**8
+    _CONST_C2 = 2**14 * L**7 * M
+    _CONST_DIVISOR_MPZ = mpz(4 * L)
+    
+    # Precompute np.e**((u - 2*L)/M) for all possible u in [0, 4*L)
+    _LUT_E_U = [0.0] * (4 * L)
+    for u in range(4 * L):
+        _LUT_E_U[u] = np.e ** ((u - 2*L) / M)
+        
+    _LUT_INITIALIZED = True
+
+
+def decode_uvw_fast(C_z, K):
+    """Fast decode using gmpy2.f_divmod from C_z down to u_list, v_list and w_z."""
+    C_f = mpz(C_z)
+    u_list = [0] * K
+    v_list = [0] * K
+    
+    for i in range(K - 1, -1, -1):
+        C_f, rem = gmpy2.f_divmod(C_f, _CONST_DIVISOR_MPZ)
+        u_list[i] = int(rem)
+        
+    for i in range(K - 1, -1, -1):
+        C_f, rem = gmpy2.f_divmod(C_f, _CONST_DIVISOR_MPZ)
+        v_list[i] = int(rem)
+        
+    return u_list, v_list, int(C_f)
+
 
 # 将 crypto_system.py 里的 calculate_sim 函数替换为如下代码：
 
@@ -147,15 +178,22 @@ def calculate_sim(c_x, c_y, C_tilde_x, C_tilde_y, K, L, M, priv=None, crt_tuple=
     start = time.time()
     c_xy = c_x * c_y
     n = len(c_x)
-    bar_c_xy = [sum(c_xy[i:i+n//K]) for i in range(0, n, n//K)]
+    seg = n // K
+    bar_c_xy = [sum(c_xy[i:i+seg]) for i in range(0, n, seg)]
 
-    # 强制将 C_z 转为 int，避免解码器类型错误
-    u_list, v_list, w_z = decode_uvw(int(C_z), K, L)
-    s_list = [1 if v % 2 == 0 else -1 for v in v_list]
+    # 极速 Decode + 打分
+    if not _LUT_INITIALIZED:
+        _init_lut_and_constants(L, M)
+        
+    u_list, v_list, w_z = decode_uvw_fast(int(C_z), K)
     
-    # calculate the score
-    W_z = np.e**((w_z - 2**15 * L**8)/(2**14 * L**7*M))
-    score = W_z * sum([bar_c_xy[i]/(s_list[i] * np.e**((u_list[i]-2*L)/M)) for i in range(K)])
+    W_z = np.e ** ((w_z - _CONST_C1) / _CONST_C2)
+    score_sum = 0.0
+    for i in range(K):
+        s = 1 if v_list[i] % 2 == 0 else -1
+        score_sum += bar_c_xy[i] / (s * _LUT_E_U[u_list[i]])
+        
+    score = W_z * score_sum
     duration_plain = time.time() - start
     
     # 【修复点2：极其安全的密文大小获取方式】
@@ -216,8 +254,10 @@ def main(folder, pair_list, score_list, K, L, M, s, key_size, feat_list):
     fw.close()
     duration = time.time() - start
     
-    print('total duration {:.4f}s, permutation duration {:.4f}s, DJ duration {:.4f}s, calculate {} pairs.\n'.format(
-        duration, sum(duration_plain), sum(duration_cypher), n))
+    total_pure_compute = sum(duration_plain) + sum(duration_cypher)
+    print('total wall-clock duration {:.4f}s (single-process)'.format(duration))
+    print('total pure permutation {:.4f}s, pure DJ duration {:.4f}s, calculate {} pairs.\n'.format(
+        sum(duration_plain), sum(duration_cypher), n))
         
     avg_homo_add_ms = sum(duration_homo_add) / n * 1000 if n > 0 else 0
     avg_cypher_ms = sum(duration_cypher) / n * 1000 if n > 0 else 0
@@ -304,8 +344,14 @@ def main_parallel(folder, pair_list, score_list, K, L, M, s, key_size, feat_list
         for file1, file2, score, _durs in raw:
             fw.write('{} {} {}\n'.format(file1, file2, score))
 
-    print('total duration {:.4f}s, permutation duration {:.4f}s, DJ duration {:.4f}s, calculate {} pairs.\n'.format(
-        duration, sum(duration_plain), sum(duration_cypher), n))
+    total_pure_compute = sum(duration_plain) + sum(duration_cypher)
+    ideal_parallel_duration = total_pure_compute / jobs if jobs > 0 else total_pure_compute
+    overhead_duration = duration - ideal_parallel_duration
+
+    print('total wall-clock duration {:.4f}s (ideal parallel pure compute {:.4f}s, multiprocessing IPC & I/O overhead {:.4f}s)'.format(
+        duration, ideal_parallel_duration, overhead_duration))
+    print('total pure permutation {:.4f}s, pure DJ duration {:.4f}s, calculate {} pairs.\n'.format(
+        sum(duration_plain), sum(duration_cypher), n))
     avg_homo_add_ms = sum(duration_homo_add) / n * 1000 if n > 0 else 0
     avg_cypher_ms = sum(duration_cypher) / n * 1000 if n > 0 else 0
     avg_plain_ms = sum(duration_plain) / n * 1000 if n > 0 else 0

@@ -22,7 +22,7 @@ echo "--------------------------------------"
 
 # 第一部分：生成分数
 # 注意：如果你需要跑所有数据集，请确保 'cfp' 'agedb' 没有被注释
-for BM in 'lfw' # 'cfp' 'agedb'
+for BM in 'cfp' 'agedb' 'lfw'
 do 
     FEAT_LIST=data/${BM}/${BM}_feat.list
     PAIR_LIST=data/${BM}/pair.list
@@ -127,7 +127,7 @@ do
 done
 
 # 第二部分：评估
-for BM in 'lfw' # 'cfp' 'agedb'  
+for BM in 'cfp' 'agedb' 'lfw'
 do 
     echo "--------------------------------------"
     echo "[${METHOD}] 正在评估数据集: ${BM}"
