@@ -143,7 +143,7 @@ def keygen_save_factors(
     n_shares: int = 3,
 ) -> Tuple[PublicKey, PrivateKeyRing]:
     """
-    Same as damgard_jurik.keygen, plus writes factors_{key_size_label}.json
+    Same as damgard_jurik.keygen, plus writes factors_{key_size_label}_s{s}.json
     with p, q (decimal strings) for CRT helpers.
     """
     if n_bits < 16:
@@ -170,7 +170,7 @@ def keygen_save_factors(
     private_key_ring = PrivateKeyRing(private_key_shares)
 
     os.makedirs(keys_dir, exist_ok=True)
-    factors_path = os.path.join(keys_dir, "factors_{}.json".format(key_size_label))
+    factors_path = factors_json_path(keys_dir, key_size_label, s)
     with open(factors_path, "w", encoding="utf-8") as f:
         json.dump(
             {
@@ -188,10 +188,17 @@ def keygen_save_factors(
     return public_key, private_key_ring
 
 
-def load_factors_json(keys_dir: str, key_size_label: int) -> Optional[Tuple[int, int, int]]:
-    path = os.path.join(keys_dir, "factors_{}.json".format(key_size_label))
+def factors_json_path(keys_dir: str, key_size_label: int, s: int) -> str:
+    return os.path.join(keys_dir, f"factors_{key_size_label}_s{s}.json")
+
+
+def load_factors_json(keys_dir: str, key_size_label: int, s: int = 1) -> Optional[Tuple[int, int, int]]:
+    path = factors_json_path(keys_dir, key_size_label, s)
     if not os.path.isfile(path):
-        return None
+        # Fallback to legacy name
+        path = os.path.join(keys_dir, f"factors_{key_size_label}.json")
+        if not os.path.isfile(path):
+            return None
     with open(path, "r", encoding="utf-8") as f:
         d = json.load(f)
     return int(d["p"]), int(d["q"]), int(d["s"])

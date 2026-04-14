@@ -171,6 +171,13 @@ def main(K, L, M, s, key_size, feature_list, folder, public_key_path, use_r_pool
 
     print('[SecureVector-DJ] Encrypting features...')
     publickey = np.load(public_key_path, allow_pickle=True)[0]
+    if int(publickey.s) != int(s):
+        raise SystemExit(
+            'Public key s={} does not match --s {}. Remove stale keys under libs/SV_DJ/keys/ '
+            'or regenerate with: python3 libs/SV_DJ/crypto_system.py --genkey 1 --key_size {} --s {}'.format(
+                int(publickey.s), int(s), key_size, int(s)
+            )
+        )
 
     # 【新增】：进入真实的特征循环注册前，先提取预计算池（可选磁盘缓存）
     cache_path = _r_pool_cache_path(r_pool_cache_dir, key_size, s, n, publickey)
@@ -275,7 +282,7 @@ if __name__ == '__main__':
         args.key_size,
         args.feat_list,
         args.folder,
-        '{}_{}.npy'.format(args.public_key, args.key_size),
+        '{}_{}_s{}.npy'.format(args.public_key, args.key_size, args.s),
         args.r_pool_cache,
         args.r_pool_cache_dir,
     )

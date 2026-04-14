@@ -95,7 +95,7 @@ do
         echo " 运行 SV_DJ 模块 - 当前配置: KS=${KS}, K=${K}, S=${S}, JOBS=${JOBS}"
         echo "=========================================="
 
-        # key generation（会生成 factors_${KS}.json 供 CRT 解密可选使用）
+        # key generation（会生成 factors_${KS}_s${S}.json 供 CRT 解密可选使用）
         if [ ! -f libs/SV_DJ/keys/privatekey_${KS}.npy ]; then
             echo '正在生成 Damgard-Jurik 密钥...'
             mkdir -p libs/SV_DJ/keys/
@@ -111,7 +111,7 @@ do
         python3 libs/SV_DJ/enrollment.py --public_key libs/SV_DJ/keys/publickey \
             --feat_list ${FEAT_LIST} --key_size ${KS} --K ${K} --s ${S} --folder ${FOLD} ${SV_DJ_RPOOL_FLAGS}
             
-        # generate similarities（设置 SV_DJ_CRT=1 启用 CRT 加速解密，需已有 factors_${KS}.json）
+        # generate similarities（设置 SV_DJ_CRT=1 启用 CRT 加速解密，需已有 factors_${KS}_s${S}.json）
         SV_DJ_CRT_FLAG=""
         if [ "${SV_DJ_CRT:-0}" = "1" ]; then
             SV_DJ_CRT_FLAG="--crt_decrypt"

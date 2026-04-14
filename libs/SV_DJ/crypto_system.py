@@ -38,7 +38,7 @@ def build_arg_parser():
     parser.add_argument(
         '--crt_decrypt',
         action='store_true',
-        help='Use CRT-accelerated threshold decrypt (requires libs/SV_DJ/keys/factors_<key_size>.json from genkey)',
+        help='Use CRT-accelerated threshold decrypt (requires libs/SV_DJ/keys/factors_<key_size>_s<s>.json from genkey)',
     )
     parser.add_argument(
         '--jobs',
@@ -64,20 +64,20 @@ private_key = None
 _crt_factors = None
 
 
-def load_private_key(key_size, keys_dir=KEYS_DIR):
+def load_private_key(key_size, s, keys_dir=KEYS_DIR):
     global private_key
     private_key = np.load(
-        os.path.join(keys_dir, 'privatekey_{}.npy'.format(key_size)), allow_pickle=True)[0]
+        os.path.join(keys_dir, 'privatekey_{}_s{}.npy'.format(key_size, s)), allow_pickle=True)[0]
     return private_key
 
 
-def _pool_init_worker(keys_dir, key_size, repo_root, crt_tuple):
+def _pool_init_worker(keys_dir, key_size, s, repo_root, crt_tuple):
     """Pool initializer: load keys in each worker (spawn-safe)."""
     global private_key, _crt_factors
     if repo_root not in sys.path:
         sys.path.insert(0, repo_root)
     private_key = np.load(
-        os.path.join(keys_dir, 'privatekey_{}.npy'.format(key_size)), allow_pickle=True)[0]
+        os.path.join(keys_dir, 'privatekey_{}_s{}.npy'.format(key_size, s)), allow_pickle=True)[0]
     _crt_factors = crt_tuple
 
 @lru_cache(maxsize=8192)
@@ -290,8 +290,8 @@ def main(folder, pair_list, score_list, K, L, M, s, key_size, feat_list):
         combined_metrics['storage'] = {}
     combined_metrics['storage']['similarity_ciphertext_size_kb'] = round(avg_c_sum_kb, 2)
     
-    pub_key_path = 'libs/SV_DJ/keys/publickey_{}.npy'.format(key_size)
-    priv_key_path = 'libs/SV_DJ/keys/privatekey_{}.npy'.format(key_size)
+    pub_key_path = 'libs/SV_DJ/keys/publickey_{}_s{}.npy'.format(key_size, s)
+    priv_key_path = 'libs/SV_DJ/keys/privatekey_{}_s{}.npy'.format(key_size, s)
     if os.path.exists(pub_key_path) and os.path.exists(priv_key_path):
         combined_metrics['storage']['public_key_kb'] = round(os.path.getsize(pub_key_path) / 1024, 2)
         combined_metrics['storage']['private_key_kb'] = round(os.path.getsize(priv_key_path) / 1024, 2)
@@ -325,7 +325,7 @@ def main_parallel(folder, pair_list, score_list, K, L, M, s, key_size, feat_list
 
     print('[SecureVector-DJ] Decrypting and matching features ({} workers)...'.format(jobs))
     work = [(ln, folder, K, L, M) for ln in lines]
-    initargs = (KEYS_DIR, key_size, _REPO_ROOT, _crt_factors)
+    initargs = (KEYS_DIR, key_size, s, _REPO_ROOT, _crt_factors)
 
     start = time.time()
     # Coarser chunks reduce IPC overhead; tune with --jobs (plan: favor fewer round-trips).
@@ -379,8 +379,8 @@ def main_parallel(folder, pair_list, score_list, K, L, M, s, key_size, feat_list
     if 'storage' not in combined_metrics:
         combined_metrics['storage'] = {}
     combined_metrics['storage']['similarity_ciphertext_size_kb'] = round(avg_c_sum_kb, 2)
-    pub_key_path = 'libs/SV_DJ/keys/publickey_{}.npy'.format(key_size)
-    priv_key_path = 'libs/SV_DJ/keys/privatekey_{}.npy'.format(key_size)
+    pub_key_path = 'libs/SV_DJ/keys/publickey_{}_s{}.npy'.format(key_size, s)
+    priv_key_path = 'libs/SV_DJ/keys/privatekey_{}_s{}.npy'.format(key_size, s)
     if os.path.exists(pub_key_path) and os.path.exists(priv_key_path):
         combined_metrics['storage']['public_key_kb'] = round(os.path.getsize(pub_key_path) / 1024, 2)
         combined_metrics['storage']['private_key_kb'] = round(os.path.getsize(priv_key_path) / 1024, 2)
@@ -424,7 +424,7 @@ if __name__ == '__main__':
     args = build_arg_parser().parse_args()
 
     if args.genkey == 1:
-        from libs.SV_DJ.dj_crt_decrypt import keygen_save_factors
+        from libs.SV_DJ.dj_crt_decrypt import keygen_save_factors, factors_json_path
 
         pubkey, prikey = keygen_save_factors(
             n_bits=args.key_size,
@@ -434,29 +434,32 @@ if __name__ == '__main__':
         )
 
         os.makedirs(KEYS_DIR, exist_ok=True)
-        np.save(os.path.join(KEYS_DIR, 'privatekey_{}.npy'.format(args.key_size)), [prikey])
-        np.save(os.path.join(KEYS_DIR, 'publickey_{}.npy'.format(args.key_size)), [pubkey])
+        np.save(os.path.join(KEYS_DIR, 'privatekey_{}_s{}.npy'.format(args.key_size, args.s)), [prikey])
+        np.save(os.path.join(KEYS_DIR, 'publickey_{}_s{}.npy'.format(args.key_size, args.s)), [pubkey])
 
-        pub_size = os.path.getsize(os.path.join(KEYS_DIR, 'publickey_{}.npy'.format(args.key_size))) / 1024
-        priv_size = os.path.getsize(os.path.join(KEYS_DIR, 'privatekey_{}.npy'.format(args.key_size))) / 1024
+        pub_size = os.path.getsize(os.path.join(KEYS_DIR, 'publickey_{}_s{}.npy'.format(args.key_size, args.s))) / 1024
+        priv_size = os.path.getsize(os.path.join(KEYS_DIR, 'privatekey_{}_s{}.npy'.format(args.key_size, args.s))) / 1024
         print(f"Keys generated. Public key: {pub_size:.2f} KB, Private key: {priv_size:.2f} KB")
-        print(f"Factors for CRT decrypt saved to {KEYS_DIR}/factors_{args.key_size}.json")
+        print("Factors for CRT decrypt saved to {}".format(factors_json_path(KEYS_DIR, args.key_size, args.s)))
         sys.exit(0)
 
     L = int(np.ceil(2**((args.key_size * args.s)/(2*args.K+9)-2) - 1))
     M = L/128
     assert L > 1
 
-    load_private_key(args.key_size)
+    load_private_key(args.key_size, args.s)
 
     if args.crt_decrypt:
-        from libs.SV_DJ.dj_crt_decrypt import load_factors_json, verify_crt_matches_reference
+        from libs.SV_DJ.dj_crt_decrypt import load_factors_json, verify_crt_matches_reference, factors_json_path
 
-        fac = load_factors_json(KEYS_DIR, args.key_size)
+        fac = load_factors_json(KEYS_DIR, args.key_size, args.s)
         if fac is None:
             raise SystemExit(
-                'CRT decrypt requires {} — regenerate keys with: python3 libs/SV_DJ/crypto_system.py --genkey 1 --key_size {} --s {}'.format(
-                    os.path.join(KEYS_DIR, 'factors_{}.json'.format(args.key_size)),
+                'CRT decrypt requires {} (legacy name factors_{}.json is accepted only if its "s" matches {}). '
+                'Regenerate with: python3 libs/SV_DJ/crypto_system.py --genkey 1 --key_size {} --s {}'.format(
+                    factors_json_path(KEYS_DIR, args.key_size, args.s),
+                    args.key_size,
+                    args.s,
                     args.key_size,
                     args.s,
                 )
@@ -465,7 +468,7 @@ if __name__ == '__main__':
         if s_fac != args.s:
             raise SystemExit('Mismatch: factors.json has s={} but args.s={}'.format(s_fac, args.s))
         pubkey = np.load(
-            os.path.join(KEYS_DIR, 'publickey_{}.npy'.format(args.key_size)), allow_pickle=True
+            os.path.join(KEYS_DIR, 'publickey_{}_s{}.npy'.format(args.key_size, args.s)), allow_pickle=True
         )[0]
         verify_crt_matches_reference(private_key, p, q, pubkey)
         _crt_factors = (p, q)
