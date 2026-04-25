@@ -2,7 +2,7 @@
 
 M=$1  
 
-METHOD_LIST=('baseline' 'securevector' 'ase' 'ironmask' 'sfm' 'securevector_cluster' 'sv_dj')
+METHOD_LIST=('baseline' 'securevector' 'ase' 'ironmask' 'sfm' 'securevector_cluster' 'sv_dj' 'sv_dj_cluster')
 METHOD=${METHOD_LIST[$M]}
 
 # --- 日志配置开始 ---
@@ -22,7 +22,7 @@ echo "--------------------------------------"
 # --- 日志配置结束 ---
 
 # 第一部分：生成分数
-for BM in 'c' # 'b'
+for BM in 'b' # 'b'
 do
     # Convert ijbx feature to id-template feature
     IJBX_BASE_FOLD=data/ijb/
@@ -116,18 +116,80 @@ do
 
     elif [[ $M == 6 ]]
     then
-        KS=512
-        K=128
-        S=2
+        KS=${KS:-512}
+        K=${K:-128}
+        S=${S:-2}
+        JOBS=${JOBS:-1}
+        
+        echo "=========================================="
+        echo " 运行 SV_DJ 模块 - 当前配置: KS=${KS}, K=${K}, S=${S}, JOBS=${JOBS}"
+        echo "=========================================="
+
         # key generation
-        if [ ! -f libs/SV_DJ/keys/privatekey_${KS}.npy ]; then
+        if [ ! -f libs/SV_DJ/keys/privatekey_${KS}_s${S}.npy ]; then
             echo 'generate Damgard-Jurik keys...'
             python3 libs/SV_DJ/crypto_system.py --genkey 1 --key_size ${KS} --s ${S}
         fi
+        
         # enrollment
-        python3 libs/SV_DJ/enrollment.py --public_key libs/SV_DJ/keys/publickey --feat_list ${TEMP_FEAT_LIST} --key_size ${KS} --K ${K} --s ${S} --folder ${FOLD}
+        SV_DJ_RPOOL_FLAGS=""
+        if [ "${SV_DJ_R_POOL_CACHE:-0}" = "1" ]; then
+            SV_DJ_RPOOL_FLAGS="--r_pool_cache --r_pool_cache_dir libs/SV_DJ/cache"
+            echo "SV_DJ: 使用 R_pool 磁盘缓存 (--r_pool_cache)"
+        fi
+        python3 libs/SV_DJ/enrollment.py --public_key libs/SV_DJ/keys/publickey --feat_list ${TEMP_FEAT_LIST} --key_size ${KS} --K ${K} --s ${S} --folder ${FOLD} ${SV_DJ_RPOOL_FLAGS}
+        
         # generate similarities
-        python3 libs/SV_DJ/crypto_system.py --key_size ${KS} --K ${K} --s ${S} --folder ${FOLD} --pair_list ${PAIR_LIST} --score_list ${SCORE_LIST} --feat_list ${TEMP_FEAT_LIST}
+        SV_DJ_CRT_FLAG=""
+        if [ "${SV_DJ_CRT:-0}" = "1" ]; then
+            SV_DJ_CRT_FLAG="--crt_decrypt"
+            echo "SV_DJ: 使用 CRT 解密 (--crt_decrypt)"
+        fi
+        python3 libs/SV_DJ/crypto_system.py --key_size ${KS} --K ${K} --s ${S} --folder ${FOLD} --pair_list ${PAIR_LIST} --score_list ${SCORE_LIST} --feat_list ${TEMP_FEAT_LIST} --jobs ${JOBS} ${SV_DJ_CRT_FLAG}
+
+    elif [[ $M == 7 ]]
+    then
+        KS=${KS:-512}
+        K=${K:-64}
+        S=${S:-1}
+        N_CLUSTERS=${2:-100}
+        TOP_K=${3:-5}
+        JOBS=${JOBS:-1}
+        
+        echo "=========================================="
+        echo " 运行 SV_DJ_cluster 模块 - 当前配置: KS=${KS}, K=${K}, S=${S}, JOBS=${JOBS}"
+        echo "=========================================="
+
+        # key generation
+        if [ ! -f libs/SV_DJ_cluster/keys/privatekey_${KS}_s${S}.npy ]; then
+            echo 'generate Damgard-Jurik keys for cluster...'
+            mkdir -p libs/SV_DJ_cluster/keys/
+            python3 libs/SV_DJ_cluster/crypto_system.py --genkey 1 --key_size ${KS} --s ${S}
+        fi
+        
+        SV_DJ_RPOOL_FLAGS=""
+        if [ "${SV_DJ_R_POOL_CACHE:-0}" = "1" ]; then
+            SV_DJ_RPOOL_FLAGS="--r_pool_cache --r_pool_cache_dir libs/SV_DJ_cluster/cache"
+            echo "SV_DJ_cluster: 使用 R_pool 磁盘缓存 (--r_pool_cache)"
+        fi
+        
+        # Step 1: Standard enrollment (all features)
+        python3 libs/SV_DJ_cluster/enrollment.py --public_key libs/SV_DJ_cluster/keys/publickey \
+            --feat_list ${TEMP_FEAT_LIST} --key_size ${KS} --K ${K} --s ${S} --folder ${FOLD} ${SV_DJ_RPOOL_FLAGS}
+            
+        # Step 2: Build cluster index
+        python3 libs/SV_DJ_cluster/build_index.py --public_key libs/SV_DJ_cluster/keys/publickey \
+            --feat_list ${TEMP_FEAT_LIST} --pair_list ${PAIR_LIST} --folder ${FOLD} --n_clusters ${N_CLUSTERS} \
+            --key_size ${KS} --K ${K} --s ${S} --metrics_output ${FOLD}/metrics_build.json
+            
+        # Step 3: Two-stage matching
+        SV_DJ_CRT_FLAG=""
+        if [ "${SV_DJ_CRT:-0}" = "1" ]; then
+            SV_DJ_CRT_FLAG="--crt_decrypt"
+            echo "SV_DJ_cluster: 使用 CRT 解密 (--crt_decrypt)"
+        fi
+        python3 libs/SV_DJ_cluster/cluster_match.py --folder ${FOLD} --pair_list ${PAIR_LIST} --score_list ${SCORE_LIST} \
+            --top_k ${TOP_K} --key_size ${KS} --K ${K} --s ${S} --jobs ${JOBS} --metrics_output ${FOLD}/metrics_match.json ${SV_DJ_CRT_FLAG}
 
     else
         echo 'key error'
@@ -137,7 +199,7 @@ done
 
 echo "===== 即将进入评估阶段 ====="
 # 第二部分：评估
-for BM in 'c' # 'b'
+for BM in 'b' # 'b'
 do 
     echo "--------------------------------------"
     echo "[${METHOD}] 正在评估数据集: IJB-${BM}"
@@ -154,7 +216,7 @@ do
             echo "  ${FOLD}/metrics_build.json"
             echo "  ${FOLD}/metrics_match.json"
             echo "  ${FOLD}/metrics_eval.json"
-        elif [[ $M == 6 ]]; then
+        elif [[ $M == 6 ]] || [[ $M == 7 ]]; then
             python3 eval/eval_1vn.py --pair_list ${PAIR_LIST} --score_list ${SCORE_LIST} --metrics_output ${FOLD}/metrics_eval.json
             echo ""
             echo "[${METHOD}] 指标报告已保存至:"
