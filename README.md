@@ -152,7 +152,6 @@ python libs/SV_DJ_cluster/cluster_match.py --crt_decrypt \
 
 ## 项目声明
 - 项目名称：基于聚类索引与增强加密的特征匹配算法设计与实现
-- 项目作者：Zhou WanTing
 - 作者单位：暨南大学网络空间安全学院
 - 开发语言：Python
 - 核心技术：隐私保护特征匹配、Damgård–Jurik同态加密、Faiss球面聚类、软聚类候选筛选
