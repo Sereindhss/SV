@@ -7,6 +7,7 @@
 - 可选 CRT 加速解密，以提升 Damgård–Jurik 解密效率
 
 ## 目录结构
+```
 SV-main/
 ├── data/
 │   ├── agedb/
@@ -41,7 +42,7 @@ SV-main/
         ├── enrollment.py
         ├── keys/
         └── cache/
-
+```
 ## 依赖环境
 
 推荐使用 Python 3.8+，安装以下依赖：
