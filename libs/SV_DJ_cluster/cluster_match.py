@@ -118,9 +118,9 @@ def _worker_coarse_probe(task):
 
     center_scores.sort(key=lambda x: x[1], reverse=True)
     top_score = center_scores[0][1]
-    margin = 0.08          # 允许与最高分相差 0.08 的相似度 0.12
-    min_clusters = 10   # 最少强制搜 5 个簇兜底 128-5 256-10 512-20 1024-50
-    max_clusters = 25  # 最多搜 25 个簇封顶10%  128-12 256-25 512-50 1024-102
+    margin = 0.12          # 允许与最高分相差 0.08 的相似度 0.12
+    min_clusters = 20   # 最少强制搜 5 个簇兜底 128-5 256-10 512-20 1024-50
+    max_clusters = 50  # 最多搜 25 个簇封顶10%  128-12 256-25 512-50 1024-102
 
     top_clusters = []
     for i, (cid, score) in enumerate(center_scores):
